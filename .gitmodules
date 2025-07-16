@@ -1,0 +1,3 @@
+[submodule "plugins/yolo-flutter-plugin"]
+	path = plugins/yolo-flutter-plugin
+	url = https://github.com/andrearsss/yolo-flutter-plugin.git
