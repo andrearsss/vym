@@ -18,7 +18,8 @@ enum ModelType {
 
   /// Pose estimation model
   //pose('yolo11n-pose', YOLOTask.pose),
-  pose('t15_fp32', YOLOTask.pose),
+  //pose('t15_fp32', YOLOTask.pose),
+  pose('t10_fp32', YOLOTask.pose),
 
   /// Oriented bounding box detection model
   obb('yolo11n-obb', YOLOTask.obb);
