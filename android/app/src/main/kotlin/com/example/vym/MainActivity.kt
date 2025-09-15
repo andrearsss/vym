@@ -1,4 +1,4 @@
-package com.example.vym
+package com.vym
 
 import io.flutter.embedding.android.FlutterActivity
 

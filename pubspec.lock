@@ -206,7 +206,7 @@ packages:
       path: "plugins/yolo-flutter-plugin"
       relative: true
     source: path
-    version: "0.1.27"
+    version: "0.1.29"
   vector_math:
     dependency: transitive
     description:
