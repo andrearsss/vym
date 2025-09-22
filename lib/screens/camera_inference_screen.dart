@@ -1,10 +1,12 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:ultralytics_yolo/yolo_result.dart';
 import 'package:ultralytics_yolo/yolo_view.dart';
 import '../../models/model_type.dart';
 import '../../models/slider_type.dart';
+import '../widgets/feedback_popup.dart';
 
 /// A screen that demonstrates real-time YOLO inference using the device camera.
 ///
@@ -37,6 +39,11 @@ class _CameraInferenceScreenState extends State<CameraInferenceScreen> {
   String _loadingMessage = '';
   double _currentZoomLevel = 1.0;
   bool _isFrontCamera = false;
+
+  // Pose feedback pop-up
+  bool _showFeedbackPopup = false;
+  String _feedbackMessage = '';
+  final GlobalKey<FeedbackPopupState> _feedbackPopupKey = GlobalKey<FeedbackPopupState>();
 
   final _yoloController = YOLOViewController();
   final _yoloViewKey = GlobalKey<YOLOViewState>();
@@ -73,6 +80,7 @@ class _CameraInferenceScreenState extends State<CameraInferenceScreen> {
   /// - Number of detections
   /// - FPS calculation
   /// - Debug information for first few detections
+  /// - Handle pose feedback pop-up
   void _onDetectionResults(List<YOLOResult> results) {
     if (!mounted) return;
 
@@ -87,6 +95,21 @@ class _CameraInferenceScreenState extends State<CameraInferenceScreen> {
       _currentFps = calculatedFps;
       _frameCount = 0;
       _lastFpsUpdate = now;
+    }
+
+    // Handle feedback popup
+    if (results.isNotEmpty && results[0].feedback != null && results[0].feedback!.isNotEmpty) {
+      final newFeedback = results[0].feedback!;
+      if (_showFeedbackPopup) {
+        // Update existing popup text with fade animation
+        _feedbackPopupKey.currentState?.updateFeedback(newFeedback);
+      } else {
+        // Show new popup
+        setState(() {
+          _showFeedbackPopup = true;
+          _feedbackMessage = newFeedback;
+        });
+      }
     }
 
     // Still update detection count in the UI
@@ -216,6 +239,23 @@ class _CameraInferenceScreenState extends State<CameraInferenceScreen> {
               ],
             ),
           ),
+
+          // Feedback popup
+          if (_showFeedbackPopup)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + (isLandscape ? 80 : 120),
+              left: 0,
+              right: 0,
+              child: FeedbackPopup(
+                key: _feedbackPopupKey,
+                message: _feedbackMessage,
+                onDismiss: () {
+                  setState(() {
+                    _showFeedbackPopup = false;
+                  });
+                },
+              ),
+            ),
 
           // Control buttons
           Positioned(
