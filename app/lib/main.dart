@@ -13,7 +13,7 @@ class VymApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const MaterialApp(
-      title: 'YOLO Plugin Example',
+      title: 'Vym',
       home: CameraInferenceScreen(),
     );
   }

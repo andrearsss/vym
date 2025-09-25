@@ -4,18 +4,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:ultralytics_yolo/yolo_result.dart';
 import 'package:ultralytics_yolo/yolo_view.dart';
+import 'package:ultralytics_yolo/exercise_type.dart';
 import '../../models/model_type.dart';
-import '../../models/slider_type.dart';
 import '../widgets/feedback_popup.dart';
 
-/// A screen that demonstrates real-time YOLO inference using the device camera.
-///
-/// This screen provides:
-/// - Live camera feed with YOLO object detection
-/// - Model selection (detect, segment, classify, pose, obb)
-/// - Adjustable thresholds (confidence, IoU, max detections)
-/// - Camera controls (flip, zoom)
-/// - Performance metrics (FPS)
 class CameraInferenceScreen extends StatefulWidget {
   const CameraInferenceScreen({super.key});
 
@@ -25,19 +17,18 @@ class CameraInferenceScreen extends StatefulWidget {
 
 class _CameraInferenceScreenState extends State<CameraInferenceScreen> {
   int _detectionCount = 0;
-  double _confidenceThreshold = 0.5;
-  double _iouThreshold = 0.45;
-  int _numItemsThreshold = 30;
+  final double _confidenceThreshold = 0.5;
+  final double _iouThreshold = 0.45;
+  final int _numItemsThreshold = 1;
   double _currentFps = 0.0;
   int _frameCount = 0;
   DateTime _lastFpsUpdate = DateTime.now();
 
-  SliderType _activeSlider = SliderType.none;
-  ModelType _selectedModel = ModelType.pose;
+  final ModelType _selectedModel = ModelType.pose;
+  ExerciseType _selectedExercise = ExerciseType.squat;
   bool _isModelLoading = false;
   String? _modelPath;
   String _loadingMessage = '';
-  double _currentZoomLevel = 1.0;
   bool _isFrontCamera = false;
 
   // Pose feedback pop-up
@@ -56,7 +47,7 @@ class _CameraInferenceScreenState extends State<CameraInferenceScreen> {
     // Load initial model
     _loadModelForPlatform();
 
-    // Set initial thresholds after frame
+    // Set initial thresholds and exercise after frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_useController) {
         _yoloController.setThresholds(
@@ -64,12 +55,14 @@ class _CameraInferenceScreenState extends State<CameraInferenceScreen> {
           iouThreshold: _iouThreshold,
           numItemsThreshold: _numItemsThreshold,
         );
+        _yoloController.setExercise(_selectedExercise);
       } else {
         _yoloViewKey.currentState?.setThresholds(
           confidenceThreshold: _confidenceThreshold,
           iouThreshold: _iouThreshold,
           numItemsThreshold: _numItemsThreshold,
         );
+         _yoloViewKey.currentState?.setExercise(_selectedExercise);
       }
     });
   }
@@ -151,13 +144,13 @@ class _CameraInferenceScreenState extends State<CameraInferenceScreen> {
                   });
                 }
               },
-              onZoomChanged: (zoomLevel) {
-                if (mounted) {
-                  setState(() {
-                    _currentZoomLevel = zoomLevel;
-                  });
-                }
-              },
+              // onZoomChanged: (zoomLevel) {
+              //   if (mounted) {
+              //     setState(() {
+              //       _currentZoomLevel = zoomLevel;
+              //     });
+              //   }
+              // },
             )
           else if (_isModelLoading)
             IgnorePointer(
@@ -200,8 +193,8 @@ class _CameraInferenceScreenState extends State<CameraInferenceScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // Model selector
-                _buildModelSelector(),
+                // Exercise selector
+                _buildExerciseSelector(),
                 SizedBox(height: isLandscape ? 8 : 12),
                 IgnorePointer(
                   child: Row(
@@ -224,18 +217,7 @@ class _CameraInferenceScreenState extends State<CameraInferenceScreen> {
                       ),
                     ],
                   ),
-                ),
-                const SizedBox(height: 8),
-                if (_activeSlider == SliderType.confidence)
-                  _buildTopPill(
-                    'CONFIDENCE THRESHOLD: ${_confidenceThreshold.toStringAsFixed(2)}',
-                  ),
-                if (_activeSlider == SliderType.iou)
-                  _buildTopPill(
-                    'IOU THRESHOLD: ${_iouThreshold.toStringAsFixed(2)}',
-                  ),
-                if (_activeSlider == SliderType.numItems)
-                  _buildTopPill('ITEMS MAX: $_numItemsThreshold'),
+                )
               ],
             ),
           ),
@@ -257,81 +239,6 @@ class _CameraInferenceScreenState extends State<CameraInferenceScreen> {
               ),
             ),
 
-          // Control buttons
-          Positioned(
-            bottom: isLandscape ? 16 : 32,
-            right: isLandscape ? 8 : 16,
-            child: Column(
-              children: [
-                if (!_isFrontCamera) ...[
-                  _buildCircleButton(
-                    '${_currentZoomLevel.toStringAsFixed(1)}x',
-                    onPressed: () {
-                      // Cycle through zoom levels: 0.5x -> 1.0x -> 3.0x -> 0.5x
-                      double nextZoom;
-                      if (_currentZoomLevel < 0.75) {
-                        nextZoom = 1.0;
-                      } else if (_currentZoomLevel < 2.0) {
-                        nextZoom = 3.0;
-                      } else {
-                        nextZoom = 0.5;
-                      }
-                      _setZoomLevel(nextZoom);
-                    },
-                  ),
-                  SizedBox(height: isLandscape ? 8 : 12),
-                ],
-                _buildIconButton(Icons.layers, () {
-                  _toggleSlider(SliderType.numItems);
-                }),
-                SizedBox(height: isLandscape ? 8 : 12),
-                _buildIconButton(Icons.adjust, () {
-                  _toggleSlider(SliderType.confidence);
-                }),
-                SizedBox(height: isLandscape ? 8 : 12),
-                _buildIconButton('assets/iou.png', () {
-                  _toggleSlider(SliderType.iou);
-                }),
-                SizedBox(height: isLandscape ? 16 : 40),
-              ],
-            ),
-          ),
-
-          // Bottom slider overlay
-          if (_activeSlider != SliderType.none)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: Container(
-                padding: EdgeInsets.symmetric(
-                  horizontal: isLandscape ? 16 : 24,
-                  vertical: isLandscape ? 8 : 12,
-                ),
-                color: Colors.black.withValues(alpha: 0.8),
-                child: SliderTheme(
-                  data: SliderTheme.of(context).copyWith(
-                    activeTrackColor: Colors.yellow,
-                    inactiveTrackColor: Colors.white.withValues(alpha: 0.3),
-                    thumbColor: Colors.yellow,
-                    overlayColor: Colors.yellow.withValues(alpha: 0.2),
-                  ),
-                  child: Slider(
-                    value: _getSliderValue(),
-                    min: _getSliderMin(),
-                    max: _getSliderMax(),
-                    divisions: _getSliderDivisions(),
-                    label: _getSliderLabel(),
-                    onChanged: (value) {
-                      setState(() {
-                        _updateSliderValue(value);
-                      });
-                    },
-                  ),
-                ),
-              ),
-            ),
-
           // Camera flip top-right
           Positioned(
             bottom:
@@ -346,9 +253,9 @@ class _CameraInferenceScreenState extends State<CameraInferenceScreen> {
                   setState(() {
                     _isFrontCamera = !_isFrontCamera;
                     // Reset zoom level when switching to front camera
-                    if (_isFrontCamera) {
-                      _currentZoomLevel = 1.0;
-                    }
+                    // if (_isFrontCamera) {
+                    //   _currentZoomLevel = 1.0;
+                    // }
                   });
                   if (_useController) {
                     _yoloController.switchCamera();
@@ -364,207 +271,47 @@ class _CameraInferenceScreenState extends State<CameraInferenceScreen> {
     );
   }
 
-  /// Builds a circular button with an icon or image
-  ///
-  /// [iconOrAsset] can be either an IconData or an asset path string
-  /// [onPressed] is called when the button is tapped
-  Widget _buildIconButton(dynamic iconOrAsset, VoidCallback onPressed) {
-    return CircleAvatar(
-      radius: 24,
-      backgroundColor: Colors.black.withValues(alpha: 0.2),
-      child: IconButton(
-        icon: iconOrAsset is IconData
-            ? Icon(iconOrAsset, color: Colors.white)
-            : Image.asset(
-                iconOrAsset,
-                width: 24,
-                height: 24,
-                color: Colors.white,
-              ),
-        onPressed: onPressed,
-      ),
-    );
-  }
-
-  /// Builds a circular button with text
-  ///
-  /// [label] is the text to display in the button
-  /// [onPressed] is called when the button is tapped
-  Widget _buildCircleButton(String label, {required VoidCallback onPressed}) {
-    return CircleAvatar(
-      radius: 24,
-      backgroundColor: Colors.black.withValues(alpha: 0.2),
-      child: TextButton(
-        onPressed: onPressed,
-        child: Text(
-          label,
-          style: const TextStyle(color: Colors.white, fontSize: 12),
-        ),
-      ),
-    );
-  }
-
-  /// Toggles the active slider type
-  ///
-  /// If the same slider type is selected again, it will be hidden.
-  /// Otherwise, the new slider type will be shown.
-  void _toggleSlider(SliderType type) {
-    setState(() {
-      _activeSlider = (_activeSlider == type) ? SliderType.none : type;
-    });
-  }
-
-  /// Builds a pill-shaped container with text
-  ///
-  /// [label] is the text to display in the pill
-  Widget _buildTopPill(String label) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-
-  /// Gets the current value for the active slider
-  double _getSliderValue() {
-    switch (_activeSlider) {
-      case SliderType.numItems:
-        return _numItemsThreshold.toDouble();
-      case SliderType.confidence:
-        return _confidenceThreshold;
-      case SliderType.iou:
-        return _iouThreshold;
-      default:
-        return 0;
-    }
-  }
-
-  /// Gets the minimum value for the active slider
-  double _getSliderMin() => _activeSlider == SliderType.numItems ? 5 : 0.1;
-
-  /// Gets the maximum value for the active slider
-  double _getSliderMax() => _activeSlider == SliderType.numItems ? 50 : 0.9;
-
-  /// Gets the number of divisions for the active slider
-  int _getSliderDivisions() => _activeSlider == SliderType.numItems ? 9 : 8;
-
-  /// Gets the label text for the active slider
-  String _getSliderLabel() {
-    switch (_activeSlider) {
-      case SliderType.numItems:
-        return '$_numItemsThreshold';
-      case SliderType.confidence:
-        return _confidenceThreshold.toStringAsFixed(1);
-      case SliderType.iou:
-        return _iouThreshold.toStringAsFixed(1);
-      default:
-        return '';
-    }
-  }
-
-  /// Updates the value of the active slider
-  ///
-  /// This method updates both the UI state and the YOLO view controller
-  /// with the new threshold value.
-  void _updateSliderValue(double value) {
-    switch (_activeSlider) {
-      case SliderType.numItems:
-        _numItemsThreshold = value.toInt();
-        if (_useController) {
-          _yoloController.setNumItemsThreshold(_numItemsThreshold);
-        } else {
-          _yoloViewKey.currentState?.setNumItemsThreshold(_numItemsThreshold);
-        }
-        break;
-      case SliderType.confidence:
-        _confidenceThreshold = value;
-        if (_useController) {
-          _yoloController.setConfidenceThreshold(value);
-        } else {
-          _yoloViewKey.currentState?.setConfidenceThreshold(value);
-        }
-        break;
-      case SliderType.iou:
-        _iouThreshold = value;
-        if (_useController) {
-          _yoloController.setIoUThreshold(value);
-        } else {
-          _yoloViewKey.currentState?.setIoUThreshold(value);
-        }
-        break;
-      default:
-        break;
-    }
-  }
-
-  /// Sets the camera zoom level
-  ///
-  /// Updates both the UI state and the YOLO view controller with the new zoom level.
-  void _setZoomLevel(double zoomLevel) {
-    setState(() {
-      _currentZoomLevel = zoomLevel;
-    });
-    if (_useController) {
-      _yoloController.setZoomLevel(zoomLevel);
-    } else {
-      _yoloViewKey.currentState?.setZoomLevel(zoomLevel);
-    }
-  }
-
-  /// Builds the model selector widget
-  ///
-  /// Creates a row of buttons for selecting different YOLO model types.
-  /// Each button shows the model type name and highlights the selected model.
-  Widget _buildModelSelector() {
-    return Container(
-      height: 36,
-      padding: const EdgeInsets.all(2),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: ModelType.values.map((model) {
-          final isSelected = _selectedModel == model;
-          return GestureDetector(
-            onTap: () {
-              if (!_isModelLoading && model != _selectedModel) {
-                setState(() {
-                  _selectedModel = model;
-                });
-                _loadModelForPlatform();
-              }
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              decoration: BoxDecoration(
-                color: isSelected ? Colors.white : Colors.transparent,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                model.name.toUpperCase(),
-                style: TextStyle(
-                  color: isSelected ? Colors.black : Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
+/// Builds the exercise selector widget
+Widget _buildExerciseSelector() {
+  return Container(
+    height: 36,
+    padding: const EdgeInsets.all(2),
+    decoration: BoxDecoration(
+      color: Colors.black.withValues(alpha: 0.6),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: ExerciseType.values.map((exercise) {
+        final isSelected = _selectedExercise == exercise;
+        return GestureDetector(
+          onTap: () {
+            setState(() {
+              _selectedExercise = exercise;
+            });
+            _yoloController.setExercise(_selectedExercise);
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            decoration: BoxDecoration(
+              color: isSelected ? Colors.white : Colors.transparent,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              exercise.exerciseName,
+              style: TextStyle(
+                color: isSelected ? Colors.black : Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
               ),
             ),
-          );
-        }).toList(),
-      ),
-    );
-  }
+          ),
+        );
+      }).toList(),
+    ),
+  );
+}
+
 
   Future<void> _loadModelForPlatform() async {
     setState(() {
