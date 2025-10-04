@@ -20,47 +20,120 @@ services:
     depends_on:
       - postgres
     environment:
-      - DATABASE_URL=postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - DATABASE_URL=postgresql+psycopg2://${AUTH_DB_USER}:${AUTH_DB_PASSWORD}@postgres:5432/${AUTH_DB}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
     ports:
       - "8001:8001"
         
-  postgres:
+  auth-db:
     image: postgres:15
     restart: unless-stopped
     environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${AUTH_DB_USER}
+      - POSTGRES_PASSWORD=${AUTH_DB_PASSWORD}
+      - POSTGRES_DB=${AUTH_DB}
     volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./services/postgres/init-db:/docker-entrypoint-initdb.d
+      - authdata:/var/lib/postgresql/data
+      - ./services/auth-db/init-db:/docker-entrypoint-initdb.d
     ports:
       - 5432:5432
 
-  # minio:
-  #   image: minio/minio     
-  #   volumes:
-  #     - minio_data:/data
-  #   environment:
-  #     MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-  #     MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-  #   command: server --console-address ":9001" /data
-  #   ports:
-  #     - "9000:9000"
-  #     - "9001:9001"
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.4.0
+    container_name: mlflow
 
-  #create-buckets:
-  #  image: minio/mc:latest
-  #  container_name: create-mlflow-bucket
-  #  depends_on:
-  #    - minio
-  #  environment:
-  #    MC_HOST_minio: http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@minio:9000
-  #  entrypoint: >
-  #    /bin/sh -c "
-  #    /usr/bin/mc mb minio/mlflow-artifacts
-  #    "
+    environment:
+      - BACKEND_STORE_URI=postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+      - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
+      - MLFLOW_ARTIFACT_ROOT=s3://mlflow-artifacts
+    command: >
+        mlflow server 
+        --backend-store-uri $$BACKEND_STORE_URI 
+        --default-artifact-root $$MLFLOW_ARTIFACT_ROOT 
+        --host 0.0.0.0 
+        --port 5000
+    depends_on:
+      - mlflow-db
+      - mlflow-s3
+    ports:
+      - "5000:5000"
+    networks:
+      - microservices_network
+
+  mlflow-db:
+    image: postgres:15
+    environment:
+      - POSTGRES_USER=${MLFLOW_DB_USER}
+      - POSTGRES_PASSWORD=${MLFLOW_DB_PASSWORD}
+      - POSTGRES_DB=${MLFLOW_DB}
+    volumes:
+      - mlflowdata:/var/lib/postgresql/data
+    ports:
+      - 5432:5432
+
+  mlflow-s3:
+    image: minio/minio     
+    volumes:
+      - minio_data:/data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    command: server --console-address ":9001" /data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+  mlflow-s3-init:
+    image: minio/mc:latest
+    container_name: minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MC_HOST_minio: http://${ARTIFACTS_USER}:${ARTIFACTS_PASSWORD}@minio:9000
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc mb --ignore-existing minio/mlflow-artifacts;
+      exit 0;
+      "
+    networks:
+      - microservices_network
+
+  # FastAPI image storage service
+  image-storage:
+    build:
+      context: ./services/storage
+      dockerfile: Dockerfile
+    environment:
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD}
+      - MINIO_SECURE=false
+      - BUCKET_NAME=user-uploads
+    depends_on:
+      - minio
+    ports:
+      - "8003:8003"
+    networks:
+      - microservices_network
+
+  image-storage-s3:
+    image: minio/mc:latest
+    container_name: minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MC_HOST_minio: http://${IMAGE_STORAGE_USER}:${IMAGE_STORAGE_PASSWORD}@minio:9000
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc mb --ignore-existing minio/user-uploads;
+      exit 0;
+      "
+    networks:
+      - microservices_network
 
 
   # training:
@@ -87,36 +160,10 @@ services:
   #   ports:
   #     - "8003:8003"
 
-  # mlflow:
-  #   image: python:3.11-slim
-  #   container_name: mlflow
-
-  #   environment:
-  #     - BACKEND_STORE_URI=postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-  #     - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
-  #     - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
-  #     - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
-  #     - MLFLOW_ARTIFACT_ROOT=s3://mlflow-artifacts
-  #   command: >
-  #     bash -c "
-  #     pip install mlflow psycopg2-binary boto3 &&
-  #       mlflow server 
-  #       --backend-store-uri $$BACKEND_STORE_URI 
-  #       --default-artifact-root $$MLFLOW_ARTIFACT_ROOT 
-  #       --host 0.0.0.0 
-  #       --port 5000
-  #     "
-  #   depends_on:
-  #     - postgres
-  #     - minio
-  #   ports:
-  #     - "5000:5000"
-  #   networks:
-  #     - microservices_network
-
 volumes:
-  pgdata:
-  # minio_data:
+  authdata:
+  mlflowdata:
+  miniodata:
 
 networks:
   microservices_network:

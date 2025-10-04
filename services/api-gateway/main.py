@@ -41,6 +41,7 @@ security = HTTPBearer(auto_error=False)
 
 # Service URLs from environment
 AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth:8001")
+STORAGE_SERVICE_URL = os.getenv("STORAGE_SERVICE_URL", "http://storage:8003")
 # TELEMETRY_SERVICE_URL = os.getenv("TELEMETRY_SERVICE_URL", "http://telemetry_service:8002")
 # IMAGE_SERVICE_URL = os.getenv("IMAGE_SERVICE_URL", "http://image_service:8003")
 # ML_SERVICE_URL = os.getenv("MLFLOW_SERVICE_URL", "http://mlflow:8004")
@@ -74,13 +75,26 @@ async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] =
         logger.error(f"Unexpected error validating token: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-# Dependency
-async def proxy_request(url: str, method: str, request: Request, **kwargs):
+async def proxy_request(url: str, method: str, request: Request, extra_headers: dict = None, **kwargs):
+    """
+    Proxy HTTP request to backend service
+    
+    Args:
+        url: Target service URL
+        method: HTTP method (GET, POST, etc.)
+        request: Original FastAPI request
+        extra_headers: Additional headers to add to the request
+        **kwargs: Additional arguments to pass to httpx.request
+    """
     try:
         body = await request.body() if method.upper() in ["POST", "PUT", "PATCH"] else None
 
         excluded = {"host", "content-length", "connection"}
         headers = {k: v for k, v in request.headers.items() if k.lower() not in excluded}
+        
+        # Add extra headers if provided
+        if extra_headers:
+            headers.update(extra_headers)
 
         response = await client.request(
             method=method,
@@ -127,12 +141,14 @@ async def get_profile(request: Request):
     url = f"{AUTH_SERVICE_URL}/auth/me"
     return await proxy_request(url, "GET", request)
 
+
 # Health check
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
     services = {
         "auth": AUTH_SERVICE_URL,
+        "storage": STORAGE_SERVICE_URL
         #"telemetry": TELEMETRY_SERVICE_URL,
         #"image": IMAGE_SERVICE_URL,
         #"ml": ML_SERVICE_URL
@@ -147,6 +163,32 @@ async def health_check():
             status["services"][service_name] = "unhealthy"
     return status
 
+
+
+# Storage routes
+@app.post("/storage/upload")
+async def upload_file(request: Request, user: dict = Depends(get_current_user)):
+    url = f"{STORAGE_SERVICE_URL}/files/upload"
+    user_id = str(user.get("id") or user.get("user_id"))
+    return await proxy_request(url, "POST", request, extra_headers={"X-User-Id": user_id})
+
+@app.get("/storage/download/{filename}")
+async def download_file(filename: str, request: Request, user: dict = Depends(get_current_user)): # todo: get admin
+    url = f"{STORAGE_SERVICE_URL}/files/download/{filename}"
+    user_id = str(user.get("id") or user.get("user_id"))
+    return await proxy_request(url, "GET", request, extra_headers={"X-User-Id": user_id})
+
+@app.get("/storage/files")
+async def list_files(request: Request, user: dict = Depends(get_current_user)):
+    url = f"{STORAGE_SERVICE_URL}/files/list"
+    user_id = str(user.get("id") or user.get("user_id"))
+    return await proxy_request(url, "GET", request, extra_headers={"X-User-Id": user_id})
+
+@app.delete("/storage/delete/{filename}")
+async def delete_file(filename: str, request: Request, user: dict = Depends(get_current_user)): # todo: get admin
+    url = f"{STORAGE_SERVICE_URL}/files/delete/{filename}"
+    user_id = str(user.get("id") or user.get("user_id"))
+    return await proxy_request(url, "DELETE", request, extra_headers={"X-User-Id": user_id})
 
 
 
