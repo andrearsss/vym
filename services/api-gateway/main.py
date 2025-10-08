@@ -41,10 +41,9 @@ security = HTTPBearer(auto_error=False)
 
 # Service URLs from environment
 AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth:8001")
-STORAGE_SERVICE_URL = os.getenv("STORAGE_SERVICE_URL", "http://storage:8003")
 # TELEMETRY_SERVICE_URL = os.getenv("TELEMETRY_SERVICE_URL", "http://telemetry_service:8002")
-# IMAGE_SERVICE_URL = os.getenv("IMAGE_SERVICE_URL", "http://image_service:8003")
-# ML_SERVICE_URL = os.getenv("MLFLOW_SERVICE_URL", "http://mlflow:8004")
+IMAGE_STORAGE_URL = os.getenv("IMAGE_STORAGE_URL", "http://image-storage:8003")
+ML_SERVICE_URL = os.getenv("MLFLOW_SERVICE_URL", "http://mlflow:5000")
 
 # Dependency
 async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
@@ -105,17 +104,28 @@ async def proxy_request(url: str, method: str, request: Request, extra_headers: 
             **kwargs
         )
 
-        if response.headers.get("content-type", "").startswith("application/json"):
+        # Handle different content types
+        content_type = response.headers.get("content-type", "")
+
+        if "application/json" in content_type:
             return JSONResponse(
                 content=response.json(),
                 status_code=response.status_code,
                 headers=dict(response.headers)
             )
-        return Response(
-            content=response.content,
-            status_code=response.status_code,
-            headers=dict(response.headers)
-        )
+        elif "image/" in content_type:
+            return Response(
+                content=response.content,
+                status_code=response.status_code,
+                media_type=content_type,
+                headers=dict(response.headers)
+            )
+        else:
+            return Response(
+                content=response.content,
+                status_code=response.status_code,
+                headers=dict(response.headers)
+            )
 
     except httpx.RequestError as e:
         logger.error(f"Request error [{method} {url}]: {e}")
@@ -126,6 +136,11 @@ async def proxy_request(url: str, method: str, request: Request, extra_headers: 
 
     
 # Authentication routes
+@app.get("/auth/me")
+async def get_profile(request: Request):
+    url = f"{AUTH_SERVICE_URL}/auth/me"
+    return await proxy_request(url, "GET", request)
+
 @app.post("/auth/signup")
 async def signup(request: Request):
     url = f"{AUTH_SERVICE_URL}/auth/signup"
@@ -136,11 +151,6 @@ async def login(request: Request):
     url = f"{AUTH_SERVICE_URL}/auth/login"
     return await proxy_request(url, "POST", request)
 
-@app.get("/auth/me")
-async def get_profile(request: Request):
-    url = f"{AUTH_SERVICE_URL}/auth/me"
-    return await proxy_request(url, "GET", request)
-
 
 # Health check
 @app.get("/health")
@@ -148,48 +158,70 @@ async def health_check():
     """Health check endpoint"""
     services = {
         "auth": AUTH_SERVICE_URL,
-        "storage": STORAGE_SERVICE_URL
         #"telemetry": TELEMETRY_SERVICE_URL,
-        #"image": IMAGE_SERVICE_URL,
-        #"ml": ML_SERVICE_URL
+        "image": IMAGE_STORAGE_URL,
+        "ml": ML_SERVICE_URL
     }
 
     status = {"status": "healthy", "services": {}}
+    all_healthy = True
+    
     for service_name, service_url in services.items():
         try:
-            response = await client.get(f"{service_url}/health", timeout=5.0)
-            status["services"][service_name] = "healthy" if response.status_code == 200 else "unhealthy"
-        except Exception:
+            health_endpoints = ["/health"]
+            service_status = "unhealthy"
+            
+            for endpoint in health_endpoints:
+                try:
+                    response = await client.get(f"{service_url}{endpoint}", timeout=5.0)
+                    if response.status_code == 200:
+                        service_status = "healthy"
+                        break
+                except:
+                    continue
+            
+            status["services"][service_name] = service_status
+            if service_status == "unhealthy":
+                all_healthy = False
+                
+        except Exception as e:
+            logger.error(f"Health check failed for {service_name}: {e}")
             status["services"][service_name] = "unhealthy"
+            all_healthy = False
+    
+    status["status"] = "healthy" if all_healthy else "degraded"
     return status
 
 
 
-# Storage routes
-@app.post("/storage/upload")
-async def upload_file(request: Request, user: dict = Depends(get_current_user)):
-    url = f"{STORAGE_SERVICE_URL}/files/upload"
+# Image storage routes
+@app.post("/images/upload")
+async def upload_image(request: Request, user: dict = Depends(get_current_user)):
+    """Upload an image"""
+    url = f"{IMAGE_STORAGE_URL}/upload"
     user_id = str(user.get("id") or user.get("user_id"))
     return await proxy_request(url, "POST", request, extra_headers={"X-User-Id": user_id})
 
-@app.get("/storage/download/{filename}")
-async def download_file(filename: str, request: Request, user: dict = Depends(get_current_user)): # todo: get admin
-    url = f"{STORAGE_SERVICE_URL}/files/download/{filename}"
+@app.get("/images/list") # todo: handle permissions
+async def list_images(request: Request, user: dict = Depends(get_current_user)):
+    """List user's images"""
+    url = f"{IMAGE_STORAGE_URL}/list"
     user_id = str(user.get("id") or user.get("user_id"))
     return await proxy_request(url, "GET", request, extra_headers={"X-User-Id": user_id})
 
-@app.get("/storage/files")
-async def list_files(request: Request, user: dict = Depends(get_current_user)):
-    url = f"{STORAGE_SERVICE_URL}/files/list"
+@app.get("/images/{filename}") # todo: use object id, handle permissions
+async def get_image(filename: str, request: Request, user: dict = Depends(get_current_user)):
+    """Get a specific image"""
+    url = f"{IMAGE_STORAGE_URL}/{filename}"
     user_id = str(user.get("id") or user.get("user_id"))
     return await proxy_request(url, "GET", request, extra_headers={"X-User-Id": user_id})
 
-@app.delete("/storage/delete/{filename}")
-async def delete_file(filename: str, request: Request, user: dict = Depends(get_current_user)): # todo: get admin
-    url = f"{STORAGE_SERVICE_URL}/files/delete/{filename}"
+@app.delete("/images/{filename}") # todo: use object id, handle permissions
+async def delete_image(filename: str, request: Request, user: dict = Depends(get_current_user)):
+    """Delete an image"""
+    url = f"{IMAGE_STORAGE_URL}/{filename}"
     user_id = str(user.get("id") or user.get("user_id"))
     return await proxy_request(url, "DELETE", request, extra_headers={"X-User-Id": user_id})
-
 
 
 '''
@@ -214,24 +246,6 @@ async def get_telemetry(request: Request, user=Depends(get_current_user)):
     url = f"{TELEMETRY_SERVICE_URL}/telemetry/events"
     return await proxy_request(url, "GET", request)
 
-# Image routes
-@app.post("/images/upload")
-async def upload_image(request: Request, user=Depends(get_current_user)):
-    """Upload image"""
-    if not user:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    
-    url = f"{IMAGE_SERVICE_URL}/images/upload"
-    return await proxy_request(url, "POST", request)
-
-@app.get("/images")
-async def list_images(request: Request, user=Depends(get_current_user)):
-    """List user images"""
-    if not user:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    
-    url = f"{IMAGE_SERVICE_URL}/images"
-    return await proxy_request(url, "GET", request)
 
 @app.get("/images/{image_id}")
 async def get_image(image_id: str, request: Request, user=Depends(get_current_user)):
@@ -239,8 +253,11 @@ async def get_image(image_id: str, request: Request, user=Depends(get_current_us
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
     
-    url = f"{IMAGE_SERVICE_URL}/images/{image_id}"
+    url = f"{IMAGE_STORAGE_URL}/images/{image_id}"
     return await proxy_request(url, "GET", request)
+
+    
+
 
 # # ML Training routes
 # @app.post("/mlflow/training/start")

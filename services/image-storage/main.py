@@ -4,7 +4,6 @@ from minio import Minio
 from minio.error import S3Error
 import os
 import logging
-from datetime import timedelta
 from typing import Optional
 import io
 
@@ -27,15 +26,15 @@ minio_client = Minio(
 )
 
 # Ensure bucket exists
-try:
-    if not minio_client.bucket_exists(BUCKET_NAME):
-        minio_client.make_bucket(BUCKET_NAME)
-        logger.info(f"Created bucket: {BUCKET_NAME}")
-except S3Error as e:
-    logger.error(f"Error creating bucket: {e}")
+# try:
+#     if not minio_client.bucket_exists(BUCKET_NAME):
+#         minio_client.make_bucket(BUCKET_NAME)
+#         logger.info(f"Created bucket: {BUCKET_NAME}")
+# except S3Error as e:
+#     logger.error(f"Error creating bucket: {e}")
 
 # File validation
-ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.pdf', '.txt', '.csv'}
+ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif'}
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 def validate_file(filename: str, file_size: int) -> None:
@@ -51,8 +50,20 @@ def validate_file(filename: str, file_size: int) -> None:
             status_code=400, 
             detail=f"File too large. Max size: {MAX_FILE_SIZE / (1024*1024)}MB"
         )
+    
 
-@app.post("/files/upload")
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    try:
+        # Check MinIO connection
+        minio_client.bucket_exists(BUCKET_NAME)
+        return {"status": "healthy", "storage": "connected"}
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {"status": "stoc", "storage": "disconnected"}
+
+@app.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
     x_user_id: Optional[str] = Header(None)
@@ -72,13 +83,13 @@ async def upload_file(
         # Create object name with user prefix
         object_name = f"users/{x_user_id}/{file.filename}"
         
-        # Upload to MinIO
+        # Upload to MinIO or overwrite if an object with the exact same object_name already exists (todo)
         minio_client.put_object(
             BUCKET_NAME,
             object_name,
             io.BytesIO(content),
             length=file_size,
-            content_type=file.content_type or "application/octet-stream"
+            content_type=file.content_type or "application/octet-stream" # todo
         )
         
         logger.info(f"File uploaded: {object_name} by user {x_user_id}")
@@ -99,7 +110,34 @@ async def upload_file(
         logger.error(f"Unexpected error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@app.get("/files/download/{filename}")
+@app.get("/list")
+async def list_files(x_user_id: Optional[str] = Header(None)):
+    """List all files for a user"""
+    if not x_user_id:
+        raise HTTPException(status_code=401, detail="User ID required")
+
+    try:
+        prefix = f"users/{x_user_id}/"
+        objects = minio_client.list_objects(BUCKET_NAME, prefix=prefix, recursive=True)
+        
+        files = []
+        for obj in objects:
+            files.append({
+                "filename": obj.object_name.split('/')[-1],
+                "size": obj.size,
+                "last_modified": obj.last_modified.isoformat()
+            })
+        
+        return {"files": files, "count": len(files)}
+    
+    except S3Error as e:
+        logger.error(f"MinIO error: {e}")
+        raise HTTPException(status_code=500, detail="Storage error")
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.get("/{filename}")
 async def download_file(
     filename: str,
     x_user_id: Optional[str] = Header(None)
@@ -131,34 +169,7 @@ async def download_file(
         logger.error(f"Unexpected error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@app.get("/files/list")
-async def list_files(x_user_id: Optional[str] = Header(None)):
-    """List all files for a user"""
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="User ID required")
-
-    try:
-        prefix = f"users/{x_user_id}/"
-        objects = minio_client.list_objects(BUCKET_NAME, prefix=prefix, recursive=True)
-        
-        files = []
-        for obj in objects:
-            files.append({
-                "filename": obj.object_name.split('/')[-1],
-                "size": obj.size,
-                "last_modified": obj.last_modified.isoformat()
-            })
-        
-        return {"files": files, "count": len(files)}
-    
-    except S3Error as e:
-        logger.error(f"MinIO error: {e}")
-        raise HTTPException(status_code=500, detail="Storage error")
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-@app.delete("/files/delete/{filename}")
+@app.delete("/{filename}")
 async def delete_file(
     filename: str,
     x_user_id: Optional[str] = Header(None)
@@ -184,13 +195,3 @@ async def delete_file(
         logger.error(f"Unexpected error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    try:
-        # Check MinIO connection
-        minio_client.bucket_exists(BUCKET_NAME)
-        return {"status": "healthy", "storage": "connected"}
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return {"status": "unhealthy", "storage": "disconnected"}

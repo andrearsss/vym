@@ -1,33 +1,49 @@
-services:
-  api-gateway:
-      build:
-        context: ./services/api-gateway
-        dockerfile: Dockerfile
-      container_name: api-gateway
-      ports:
-        - "8000:8000"
-      environment:
-        - AUTH_SERVICE_URL=http://auth:8001
-        #- TELEMETRY_SERVICE_URL=http://telemetry_service:8002
-        #- IMAGE_SERVICE_URL=http://image_service:8003
-        - MLFLOW_SERVICE_URL=http://mlflow:8004
-      depends_on:
-        - auth
-        #- mlflow
 
-  auth:
-    build: ./services/auth
-    depends_on:
-      - postgres
+services:
+  # ======================
+  # API GATEWAY
+  # ======================
+  api-gateway:
+    build:
+      context: ./services/api-gateway
+      dockerfile: Dockerfile
+    container_name: api-gateway
+    ports:
+      - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql+psycopg2://${AUTH_DB_USER}:${AUTH_DB_PASSWORD}@postgres:5432/${AUTH_DB}
+      - AUTH_SERVICE_URL=http://auth:8001
+      - MLFLOW_SERVICE_URL=http://mlflow:5000
+      - IMAGE_SERVICE_URL=http://image-storage:8003
+    depends_on:
+      - auth
+      - mlflow
+    networks:
+      - microservices_network
+
+  # ======================
+  # AUTH SERVICE
+  # ======================
+  auth:
+    build:
+      context: ./services/auth
+      dockerfile: Dockerfile
+    container_name: auth
+    depends_on:
+      - auth-db
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://${AUTH_DB_USER}:${AUTH_DB_PASSWORD}@auth-db:5432/${AUTH_DB}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
     ports:
       - "8001:8001"
+    networks:
+      - microservices_network
         
+  # ======================
+  # AUTH POSTGRES
+  # ======================
   auth-db:
     image: postgres:15
-    restart: unless-stopped
+    container_name: auth-db
     environment:
       - POSTGRES_USER=${AUTH_DB_USER}
       - POSTGRES_PASSWORD=${AUTH_DB_PASSWORD}
@@ -36,24 +52,28 @@ services:
       - authdata:/var/lib/postgresql/data
       - ./services/auth-db/init-db:/docker-entrypoint-initdb.d
     ports:
-      - 5432:5432
+      - "5433:5432"
+    networks:
+      - microservices_network
 
+  # ======================
+  # MLFLOW SERVICE
+  # ======================
   mlflow:
     image: ghcr.io/mlflow/mlflow:v3.4.0
     container_name: mlflow
-
     environment:
-      - BACKEND_STORE_URI=postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
-      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
-      - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
+      - BACKEND_STORE_URI=postgresql+psycopg2://${MLFLOW_DB_USER}:${MLFLOW_DB_PASSWORD}@mlflow-db:5432/${MLFLOW_DB}
+      - AWS_ACCESS_KEY_ID=${ARTIFACTS_STORAGE_USER}
+      - AWS_SECRET_ACCESS_KEY=${ARTIFACTS_STORAGE_PASSWORD}
+      - MLFLOW_S3_ENDPOINT_URL=http://mlflow-s3:9000
       - MLFLOW_ARTIFACT_ROOT=s3://mlflow-artifacts
     command: >
-        mlflow server 
-        --backend-store-uri $$BACKEND_STORE_URI 
-        --default-artifact-root $$MLFLOW_ARTIFACT_ROOT 
-        --host 0.0.0.0 
-        --port 5000
+      mlflow server 
+      --backend-store-uri $$BACKEND_STORE_URI 
+      --default-artifact-root $$MLFLOW_ARTIFACT_ROOT 
+      --host 0.0.0.0 
+      --port 5000
     depends_on:
       - mlflow-db
       - mlflow-s3
@@ -62,8 +82,12 @@ services:
     networks:
       - microservices_network
 
+  # ======================
+  # MLFLOW METADATA DB
+  # ======================
   mlflow-db:
     image: postgres:15
+    container_name: mlflow-db
     environment:
       - POSTGRES_USER=${MLFLOW_DB_USER}
       - POSTGRES_PASSWORD=${MLFLOW_DB_PASSWORD}
@@ -71,28 +95,38 @@ services:
     volumes:
       - mlflowdata:/var/lib/postgresql/data
     ports:
-      - 5432:5432
+      - "5434:5432"
+    networks:
+      - microservices_network
 
+  # ======================
+  # MLFLOW MINIO Artifact store
+  # ======================
   mlflow-s3:
-    image: minio/minio     
+    image: minio/minio
+    container_name: mlflow-s3
     volumes:
-      - minio_data:/data
+      - minio_mlflow_data:/data
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      - MINIO_ROOT_USER=${ARTIFACTS_STORAGE_USER}
+      - MINIO_ROOT_PASSWORD=${ARTIFACTS_STORAGE_PASSWORD}
     command: server --console-address ":9001" /data
     ports:
       - "9000:9000"
       - "9001:9001"
+    networks:
+      - microservices_network
 
+  # ======================
+  # MLFLOW MINIO INIT BUCKET
+  # ======================
   mlflow-s3-init:
     image: minio/mc:latest
-    container_name: minio-init
+    container_name: mlflow-s3-init
     depends_on:
-      minio:
-        condition: service_healthy
+      - mlflow-s3
     environment:
-      MC_HOST_minio: http://${ARTIFACTS_USER}:${ARTIFACTS_PASSWORD}@minio:9000
+      - MC_HOST_minio=http://${ARTIFACTS_STORAGE_USER}:${ARTIFACTS_STORAGE_PASSWORD}@mlflow-s3:9000
     entrypoint: >
       /bin/sh -c "
       /usr/bin/mc mb --ignore-existing minio/mlflow-artifacts;
@@ -101,32 +135,55 @@ services:
     networks:
       - microservices_network
 
-  # FastAPI image storage service
+  # ======================
+  # IMAGE STORAGE SERVICE
+  # ======================
   image-storage:
     build:
-      context: ./services/storage
+      context: ./services/image-storage
       dockerfile: Dockerfile
+    container_name: image-storage
     environment:
-      - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER}
-      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD}
+      - MINIO_ENDPOINT=image-s3:9000
+      - MINIO_ACCESS_KEY=${IMAGE_STORAGE_USER}
+      - MINIO_SECRET_KEY=${IMAGE_STORAGE_PASSWORD}
       - MINIO_SECURE=false
       - BUCKET_NAME=user-uploads
     depends_on:
-      - minio
+      - image-s3
     ports:
       - "8003:8003"
     networks:
       - microservices_network
 
-  image-storage-s3:
-    image: minio/mc:latest
-    container_name: minio-init
-    depends_on:
-      minio:
-        condition: service_healthy
+  # ======================
+  # IMAGE STORAGE MINIO
+  # ======================
+  image-s3:
+    image: minio/minio
+    container_name: image-s3
+    volumes:
+      - minio_image_data:/data
     environment:
-      MC_HOST_minio: http://${IMAGE_STORAGE_USER}:${IMAGE_STORAGE_PASSWORD}@minio:9000
+      - MINIO_ROOT_USER=${IMAGE_STORAGE_USER}
+      - MINIO_ROOT_PASSWORD=${IMAGE_STORAGE_PASSWORD}
+    command: server --console-address ":9001" /data
+    ports:
+      - "9100:9000"
+      - "9101:9001"
+    networks:
+      - microservices_network
+
+  # ======================
+  # IMAGE STORAGE BUCKET INIT
+  # ======================
+  image-s3-init:
+    image: minio/mc:latest
+    container_name: image-s3-init
+    depends_on:
+      - image-s3
+    environment:
+      - MC_HOST_minio=http://${IMAGE_STORAGE_USER}:${IMAGE_STORAGE_PASSWORD}@image-s3:9000
     entrypoint: >
       /bin/sh -c "
       /usr/bin/mc mb --ignore-existing minio/user-uploads;
@@ -136,34 +193,38 @@ services:
       - microservices_network
 
 
+  # ======================
+  # TRAINING SERVICE
+  # ======================
   # training:
   #   build: ./services/training
   #   depends_on:
-  #     - postgres
-  #     - minio
+  #     - auth-db
+  #     - mlflow-s3
   #     - mlflow
   #   environment:
-  #     - DATABASE_URL=postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-  #     - MINIO_ENDPOINT=minio:9000
-  #     - MINIO_ACCESS_KEY=${MINIO_ROOT_USER}
-  #     - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD}
+  #     - DATABASE_URL=postgresql+psycopg2://${MLFLOW_DB_USER}:${MLFLOW_DB_PASSWORD}@mlflow-db:5432/${MLFLOW_DB}
+  #     - MINIO_ENDPOINT=mlflow-s3:9000
+  #     - MINIO_ACCESS_KEY=${ARTIFACTS_STORAGE_USER}
+  #     - MINIO_SECRET_KEY=${ARTIFACTS_STORAGE_PASSWORD}
   #     - MLFLOW_TRACKING_URI=http://mlflow:5000
-  #    - NVIDIA_VISIBLE_DEVICES=all
-  #    - NVIDIA_DRIVER_CAPABILITIES=all
+  #     - NVIDIA_VISIBLE_DEVICES=all
+  #     - NVIDIA_DRIVER_CAPABILITIES=all
   #   deploy:
-  #    resources:
-  #      reservations:
-  #        devices:
-  #          - driver: nvidia
-  #            count: all
-  #            capabilities: [gpu] 		# command: >		#  yolo detect train		#  data=/workspace/data.yaml		#  model=yolov8n.pt#  epochs=100 #  project=/workspace/runs
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [gpu]
   #   ports:
-  #     - "8003:8003"
+  #     - "8005:8005"
 
 volumes:
   authdata:
   mlflowdata:
-  miniodata:
+  minio_mlflow_data:
+  minio_image_data:
 
 networks:
   microservices_network:
