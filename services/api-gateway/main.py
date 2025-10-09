@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi import FastAPI, HTTPException, Depends, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import Response, JSONResponse
@@ -43,7 +43,7 @@ security = HTTPBearer(auto_error=False)
 AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth:8001")
 # TELEMETRY_SERVICE_URL = os.getenv("TELEMETRY_SERVICE_URL", "http://telemetry_service:8002")
 IMAGE_STORAGE_URL = os.getenv("IMAGE_STORAGE_URL", "http://image-storage:8003")
-ML_SERVICE_URL = os.getenv("MLFLOW_SERVICE_URL", "http://mlflow:5000")
+MLFLOW_SERVICE_URL = os.getenv("MLFLOW_SERVICE_URL", "http://mlflow:5000")
 
 # Dependency
 async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
@@ -95,12 +95,17 @@ async def proxy_request(url: str, method: str, request: Request, extra_headers: 
         if extra_headers:
             headers.update(extra_headers)
 
+        # Merge query params from the request and any explicitly passed ones
+        merged_params = dict(request.query_params)
+        if "params" in kwargs and kwargs["params"]:
+            merged_params.update(kwargs.pop("params"))
+
         response = await client.request(
             method=method,
             url=url,
             headers=headers,
             content=body,
-            params=dict(request.query_params),
+            params=merged_params,
             **kwargs
         )
 
@@ -160,7 +165,7 @@ async def health_check():
         "auth": AUTH_SERVICE_URL,
         #"telemetry": TELEMETRY_SERVICE_URL,
         "image": IMAGE_STORAGE_URL,
-        "ml": ML_SERVICE_URL
+        "ml": MLFLOW_SERVICE_URL
     }
 
     status = {"status": "healthy", "services": {}}
@@ -224,6 +229,27 @@ async def delete_image(filename: str, request: Request, user: dict = Depends(get
     return await proxy_request(url, "DELETE", request, extra_headers={"X-User-Id": user_id})
 
 
+# MLFlow routes
+@app.get("/mlflow/models")
+async def list_models(request: Request, user=Depends(get_current_user)):
+    """List ML models"""
+    url = f"{MLFLOW_SERVICE_URL}/api/2.0/mlflow/model-versions/search"
+    return await proxy_request(url, "GET", request)
+
+
+@app.get("/mlflow/experiments")
+async def list_experiments(
+    request: Request,
+    user=Depends(get_current_user),
+    max_results: int = Query(20, description="Maximum number of results to return (default: 20)")
+):
+    """List all experiments"""
+    url = f"{MLFLOW_SERVICE_URL}/api/2.0/mlflow/experiments/search"
+    query_params = dict(request.query_params)
+    query_params.setdefault("max_results", max_results)
+    return await proxy_request(url, "GET", request, params=query_params)
+
+
 '''
 
 
@@ -266,7 +292,7 @@ async def get_image(image_id: str, request: Request, user=Depends(get_current_us
 #     if not user:
 #         raise HTTPException(status_code=401, detail="Authentication required")
     
-#     url = f"{ML_SERVICE_URL}/ml/training/start"
+#     url = f"{MLFLOW_SERVICE_URL}/ml/training/start"
 #     return await proxy_request(url, "POST", request)
 
 # @app.get("/mlflow/training/jobs")
@@ -275,7 +301,7 @@ async def get_image(image_id: str, request: Request, user=Depends(get_current_us
 #     if not user:
 #         raise HTTPException(status_code=401, detail="Authentication required")
     
-#     url = f"{ML_SERVICE_URL}/ml/training/jobs"
+#     url = f"{MLFLOW_SERVICE_URL}/ml/training/jobs"
 #     return await proxy_request(url, "GET", request)
 
 # @app.get("/mlflow/training/{job_id}")
@@ -284,16 +310,9 @@ async def get_image(image_id: str, request: Request, user=Depends(get_current_us
 #     if not user:
 #         raise HTTPException(status_code=401, detail="Authentication required")
     
-#     url = f"{ML_SERVICE_URL}/ml/training/{job_id}"
+#     url = f"{MLFLOW_SERVICE_URL}/ml/training/{job_id}"
 #     return await proxy_request(url, "GET", request)
 
-# @app.get("/mlflow/models")
-# async def list_models(request: Request, user=Depends(get_current_user)):
-#     """List ML models"""
-#     if not user:
-#         raise HTTPException(status_code=401, detail="Authentication required")
-    
-#     url = f"{ML_SERVICE_URL}/ml/models"
-#     return await proxy_request(url, "GET", request)
+
 
     '''

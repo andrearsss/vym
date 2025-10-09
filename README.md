@@ -9,5 +9,6 @@ The project is structured in two main folders:
 - **/services**: This folder hosts the microservices backend that powers the app.
 - - /api-gateway: FastAPI main access point
 - - /auth: FastAPI service for authentication and authorization
-- - /postgres: Shared DB for account storage and future work
+- - /auth-db: Postgres DB for account storage
+- - /image-storage: FastAPI service image storage into local MinIO S3 bucket
 - - TBD: services for training, model registry and data ingestion
