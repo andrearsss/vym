@@ -93,7 +93,8 @@ async def signup(user_data: UserSignup, db: Session = Depends(get_db)):
             user=UserResponse(
                 id=str(new_user.id),
                 email=new_user.email,
-                username=new_user.username
+                username=new_user.username,
+                role=new_user.role
             )
         )
         
@@ -126,7 +127,8 @@ async def login(credentials: UserLogin, db: Session = Depends(get_db)):
             user=UserResponse(
                 id=str(user.id),
                 email=user.email,
-                username=user.username
+                username=user.username,
+                role=user.role
             )
         )
         
@@ -144,5 +146,6 @@ async def get_current_user_profile(current_user: User = Depends(get_current_user
     return UserResponse(
         id=str(current_user.id),
         email=current_user.email,
-        username=current_user.username
+        username=current_user.username,
+        role = current_user.role
     )

@@ -70,8 +70,6 @@ services:
       - MLFLOW_ARTIFACT_ROOT=s3://mlflow-artifacts
     command: >
       mlflow server 
-      --backend-store-uri $$BACKEND_STORE_URI 
-      --default-artifact-root $$MLFLOW_ARTIFACT_ROOT 
       --host 0.0.0.0 
       --port 5000
     depends_on:
@@ -196,29 +194,34 @@ services:
   # ======================
   # TRAINING SERVICE
   # ======================
-  # training:
-  #   build: ./services/training
-  #   depends_on:
-  #     - auth-db
-  #     - mlflow-s3
-  #     - mlflow
-  #   environment:
-  #     - DATABASE_URL=postgresql+psycopg2://${MLFLOW_DB_USER}:${MLFLOW_DB_PASSWORD}@mlflow-db:5432/${MLFLOW_DB}
-  #     - MINIO_ENDPOINT=mlflow-s3:9000
-  #     - MINIO_ACCESS_KEY=${ARTIFACTS_STORAGE_USER}
-  #     - MINIO_SECRET_KEY=${ARTIFACTS_STORAGE_PASSWORD}
-  #     - MLFLOW_TRACKING_URI=http://mlflow:5000
-  #     - NVIDIA_VISIBLE_DEVICES=all
-  #     - NVIDIA_DRIVER_CAPABILITIES=all
-  #   deploy:
-  #     resources:
-  #       reservations:
-  #         devices:
-  #           - driver: nvidia
-  #             count: all
-  #             capabilities: [gpu]
-  #   ports:
-  #     - "8005:8005"
+  training:
+    build: ./services/training
+    depends_on:
+      - auth
+      - auth-db
+      - mlflow-s3
+      - mlflow
+      - image-storage
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://${MLFLOW_DB_USER}:${MLFLOW_DB_PASSWORD}@mlflow-db:5432/${MLFLOW_DB}
+      - MINIO_ENDPOINT=mlflow-s3:9000
+      - MINIO_ACCESS_KEY=${ARTIFACTS_STORAGE_USER}
+      - MINIO_SECRET_KEY=${ARTIFACTS_STORAGE_PASSWORD}
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    shm_size: 2g
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    ports:
+      - "8005:8005"
+    networks:
+    - microservices_network
 
 volumes:
   authdata:

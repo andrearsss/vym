@@ -74,6 +74,28 @@ async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] =
         logger.error(f"Unexpected error validating token: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+# Dependency
+async def is_admin(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
+    """Validate JWT token and ensure the user has an admin role"""
+    user = await get_current_user(credentials)
+    try:
+        if not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+
+        # Check admin role
+        role = user.get("role")
+        if role != "admin":
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+        return user
+    
+    except HTTPException:
+        # re-raise exception
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error verifying admin role: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 async def proxy_request(url: str, method: str, request: Request, extra_headers: dict = None, **kwargs):
     """
     Proxy HTTP request to backend service
@@ -207,22 +229,22 @@ async def upload_image(request: Request, user: dict = Depends(get_current_user))
     user_id = str(user.get("id") or user.get("user_id"))
     return await proxy_request(url, "POST", request, extra_headers={"X-User-Id": user_id})
 
-@app.get("/images/list") # todo: handle permissions
-async def list_images(request: Request, user: dict = Depends(get_current_user)):
+@app.get("/images/list")
+async def list_images(request: Request, user: dict = Depends(is_admin)):
     """List user's images"""
     url = f"{IMAGE_STORAGE_URL}/list"
     user_id = str(user.get("id") or user.get("user_id"))
     return await proxy_request(url, "GET", request, extra_headers={"X-User-Id": user_id})
 
-@app.get("/images/{filename}") # todo: use object id, handle permissions
-async def get_image(filename: str, request: Request, user: dict = Depends(get_current_user)):
+@app.get("/images/{filename}") # todo: use object id
+async def get_image(filename: str, request: Request, user: dict = Depends(is_admin)):   # admin only
     """Get a specific image"""
     url = f"{IMAGE_STORAGE_URL}/{filename}"
     user_id = str(user.get("id") or user.get("user_id"))
     return await proxy_request(url, "GET", request, extra_headers={"X-User-Id": user_id})
 
-@app.delete("/images/{filename}") # todo: use object id, handle permissions
-async def delete_image(filename: str, request: Request, user: dict = Depends(get_current_user)):
+@app.delete("/images/{filename}") # todo: use object id
+async def delete_image(filename: str, request: Request, user: dict = Depends(is_admin)):    # admin only 
     """Delete an image"""
     url = f"{IMAGE_STORAGE_URL}/{filename}"
     user_id = str(user.get("id") or user.get("user_id"))
@@ -231,18 +253,14 @@ async def delete_image(filename: str, request: Request, user: dict = Depends(get
 
 # MLFlow routes
 @app.get("/mlflow/models")
-async def list_models(request: Request, user=Depends(get_current_user)):
+async def list_models(request: Request, user=Depends(is_admin)):    # admin only
     """List ML models"""
     url = f"{MLFLOW_SERVICE_URL}/api/2.0/mlflow/model-versions/search"
     return await proxy_request(url, "GET", request)
 
 
 @app.get("/mlflow/experiments")
-async def list_experiments(
-    request: Request,
-    user=Depends(get_current_user),
-    max_results: int = Query(20, description="Maximum number of results to return (default: 20)")
-):
+async def list_experiments(request: Request, user=Depends(is_admin), max_results: int = Query(20, description="Max number of results to return (default: 20)")): # admin only
     """List all experiments"""
     url = f"{MLFLOW_SERVICE_URL}/api/2.0/mlflow/experiments/search"
     query_params = dict(request.query_params)
@@ -250,39 +268,24 @@ async def list_experiments(
     return await proxy_request(url, "GET", request, params=query_params)
 
 
-'''
-
-
-# Telemetry routes
-@app.post("/telemetry/events")
-async def log_telemetry(request: Request, user=Depends(get_current_user)):
-    """Log telemetry events"""
-    if not user:
-        raise HTTPException(status_code=401, detail="Authentication required")
+# # Telemetry routes
+# @app.post("/telemetry/events")
+# async def log_telemetry(request: Request, user=Depends(get_current_user)):
+#     """Log telemetry events"""
+#     if not user:
+#         raise HTTPException(status_code=401, detail="Authentication required")
     
-    url = f"{TELEMETRY_SERVICE_URL}/telemetry/events"
-    return await proxy_request(url, "POST", request)
+#     url = f"{TELEMETRY_SERVICE_URL}/telemetry/events"
+#     return await proxy_request(url, "POST", request)
 
-@app.get("/telemetry/events")
-async def get_telemetry(request: Request, user=Depends(get_current_user)):
-    """Get telemetry events"""
-    if not user:
-        raise HTTPException(status_code=401, detail="Authentication required")
+# @app.get("/telemetry/events")
+# async def get_telemetry(request: Request, user=Depends(get_current_user)):
+#     """Get telemetry events"""
+#     if not user:
+#         raise HTTPException(status_code=401, detail="Authentication required")
     
-    url = f"{TELEMETRY_SERVICE_URL}/telemetry/events"
-    return await proxy_request(url, "GET", request)
-
-
-@app.get("/images/{image_id}")
-async def get_image(image_id: str, request: Request, user=Depends(get_current_user)):
-    """Get specific image"""
-    if not user:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    
-    url = f"{IMAGE_STORAGE_URL}/images/{image_id}"
-    return await proxy_request(url, "GET", request)
-
-    
+#     url = f"{TELEMETRY_SERVICE_URL}/telemetry/events"
+#     return await proxy_request(url, "GET", request)
 
 
 # # ML Training routes
@@ -312,7 +315,3 @@ async def get_image(image_id: str, request: Request, user=Depends(get_current_us
     
 #     url = f"{MLFLOW_SERVICE_URL}/ml/training/{job_id}"
 #     return await proxy_request(url, "GET", request)
-
-
-
-    '''
