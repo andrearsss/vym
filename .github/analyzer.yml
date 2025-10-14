@@ -1,0 +1,50 @@
+name: Dart Static Analysis & Linting
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  analyze:
+    name: Static Analysis & Linting
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # Run Dart analyzer
+      - name: Static Analysis
+        run: flutter analyze --fatal-infos
+
+      # Format
+      - name: Format check
+        run: dart format --output=none --set-exit-if-changed .
+
+      # - name: Install lcov
+      #   run: sudo apt-get install lcov
+
+      #  Run tests
+      # name: Run tests
+      # run: flutter test --no-pub --coverage
+
+      # Upload coverage results to GitHub summary
+      # - name: Upload coverage report
+      #   if: success()
+      #   run: |
+      #     echo "Coverage summary:" >> $GITHUB_STEP_SUMMARY
+      #     lcov --summary coverage/lcov.info >> $GITHUB_STEP_SUMMARY || echo "No coverage info found"

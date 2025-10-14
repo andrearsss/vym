@@ -32,7 +32,7 @@ class _SignupPageState extends State<SignupPage> {
     setState(() => _isLoading = false);
 
     if (response.statusCode == 200) {
-      Navigator.pop(context); // Go back to LoginPage
+      if (mounted) Navigator.pop(context); // Go back to LoginPage
     } else {
       _showErrorDialog("Signup failed. Try again.");
     }

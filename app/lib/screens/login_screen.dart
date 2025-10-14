@@ -34,10 +34,12 @@ class _LoginPageState extends State<LoginPage> {
 
     if (response.statusCode == 200) {
       // Navigate to CameraInferenceScreen
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const CameraInferenceScreen()),
-      );
+      if (mounted) { // needed for linter warning on 'context'
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const CameraInferenceScreen()),
+        );
+      }
     } else {
       _showErrorDialog("Login failed. Please check your credentials.");
     }
